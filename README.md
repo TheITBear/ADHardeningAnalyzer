@@ -1,2 +1,1 @@
-# ADHardeningAnalyzer
-A Poweshell Script for Analyze Scurities Best Practices for Active Directory
+# README for AD Hardening Toolkit
