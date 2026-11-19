@@ -1,80 +1,129 @@
-# 🛡️ Active Directory Hardening Toolkit
+# 🛡️ AD Hardening Analyzer
 
-This repository contains a set of PowerShell scripts to automate the assessment of Active Directory hardening and security posture, based on best practices from CIS Benchmarks, Microsoft, and enterprise-level security standards.
+Read-only PowerShell assessment of **Active Directory hardening and security posture**, based on CIS Benchmarks, Microsoft security baselines and common AD attack paths (Kerberoasting, AS-REP roasting, delegation abuse, NTLMv1, unsigned LDAP, SIDHistory, etc.).
+
+> The script **never changes** AD or domain controllers: it only reads and reports.
 
 ---
 
 ## 📂 Contents
 
-| File                                | Description                                          |
-|-------------------------------------|------------------------------------------------------|
-| `AD_Hardening_Report_Script.ps1`    | Interactive script with 16 baseline hardening checks |
-| `AD_Hardening_Advanced_Checks.ps1`  | 12 advanced audit blocks for deep AD inspection      |
-| `Esegui_AD_Hardening.bat`           | Windows launcher for simplified execution           |
-| `AD_Hardening_Report_Script.txt`    | Readable version of the full `.ps1` base script      |
+| File | Description |
+|------|-------------|
+| `scripts/AD-Hardening-Analyzer.ps1` | Single non-interactive analyzer (36 checks, TXT/HTML/CSV/XLSX output) |
 
 ---
 
 ## 🧰 Requirements
 
-- Run as **Administrator**
-- Requires **RSAT: ActiveDirectory** PowerShell module
-- Optional (for extra features):
-  - `ImportExcel` (Excel output)
-  - `Word` module (Word `.docx` report generation)
+- Windows PowerShell **5.1+**
+- **RSAT**: `ActiveDirectory` module (required), `GroupPolicy` module (optional, for GPO checks)
+- **WinRM** reachable on all domain controllers (DC checks run remotely, in parallel)
+- Account with read access to AD and **local admin rights on DCs** (registry, services, Security / Directory Service event logs) — typically a Tier 0 admin account from a PAW
+- Optional: `ImportExcel` module for the `-Excel` output (not auto-installed)
 
-Install modules if missing:
+---
+
+## 🚀 Usage
+
 ```powershell
-Install-Module -Name ImportExcel -Scope CurrentUser -Force
-Install-Module -Name Word -Scope CurrentUser -Force
+# Full assessment (output on Desktop\ADHardening_<timestamp>)
+.\scripts\AD-Hardening-Analyzer.ps1
+
+# Custom thresholds, 3 days of events, Excel workbook
+.\scripts\AD-Hardening-Analyzer.ps1 -InactiveDays 60 -EventHours 72 -Excel
+
+# AD-only (no WinRM to DCs)
+.\scripts\AD-Hardening-Analyzer.ps1 -SkipDCChecks -OutputPath D:\Audit
 ```
 
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-OutputPath` | `Desktop\ADHardening_<timestamp>` | Output folder |
+| `-Server` | PDC emulator | DC used for AD queries |
+| `-InactiveDays` | 90 | Inactive users/computers threshold |
+| `-EventHours` | 24 | Look-back window for DC event analysis |
+| `-MaxEvents` | 5000 | Max events read per DC per query |
+| `-SkipDCChecks` | off | Skip remote DC checks |
+| `-Excel` | off | Also write an XLSX (requires ImportExcel) |
+| `-ThrottleLimit` | 16 | Parallel WinRM connections |
+| `-ConnectTimeoutSec` / `-OperationTimeoutSec` | 15 / 300 | WinRM timeouts |
+
+### 📁 Output
+
+```
+ADHardening_YYYYMMDD_HHmmss\
+├─ AD_Hardening_Report.html   # summary + per-check details, sorted by severity
+├─ AD_Hardening_Report.txt
+├─ AD_Hardening_Report.xlsx   # with -Excel
+├─ GPO_Report.html
+├─ summary.csv
+├─ run.log
+└─ csv\NN_<check>.csv          # affected objects for each check
+```
+
+Severity levels: **High / Medium / Low / Info / OK / Error** (a failing check is reported as *Error* and never stops the run).
+
 ---
 
-## 🚀 How to Use
+## ✅ Checks
 
-1. **Extract the ZIP package**
-2. **Right-click `Esegui_AD_Hardening.bat` and run as Administrator**
-3. Follow the interactive prompts
-4. Reports will be saved to your Desktop:
-   - `AD_Hardening_Report.txt`
-   - Optional: `.csv`, `.docx`, `.html`
+| # | Check | Scope |
+|---|-------|-------|
+| 00 | DC reachability (WinRM) | DCs |
+| 01 | Inactive users | AD |
+| 02 | Inactive computers | AD |
+| 03 | Privileged group membership (recursive, resolved by SID) | AD |
+| 04 | Password never expires (privileged flagged High) | AD |
+| 05 | Orphaned `adminCount=1` | AD |
+| 06 | OU structure / protection from accidental deletion | AD |
+| 07 | Unsupported OS (XP→8.1, Server ≤ 2012 R2, Windows 10 EOL) | AD |
+| 08 | SMBv1 / SMB signing | DCs |
+| 09 | NTLM `LmCompatibilityLevel` | DCs |
+| 10 | LDAP signing / channel binding (`LdapEnforceChannelBinding`) | DCs |
+| 11 | Print Spooler | DCs |
+| 12 | Firewall profiles + listening TCP ports | DCs |
+| 13 | GPO HTML export | GPO |
+| 14 | LSASS `RunAsPPL` | DCs |
+| 15 | LAPS coverage (legacy + Windows LAPS) | AD |
+| 16 | AS-REP roastable accounts | AD |
+| 17 | Duplicate SPNs | AD |
+| 18 | Privileged account protections (Protected Users, not delegable, PAW restriction, password age, SPN) | AD |
+| 19 | Kerberos delegation (unconstrained / protocol transition / constrained) | AD |
+| 20 | Resource-based constrained delegation | AD |
+| 21 | GPO edit permissions for non-default trustees | GPO |
+| 22 | SIDHistory (same-domain SID = possible injection) | AD |
+| 23 | Kerberoastable accounts | AD |
+| 24 | Trusts (SID filtering, selective auth, TGT delegation) | AD |
+| 25 | gMSA inventory | AD |
+| 26 | DC patch recency | DCs |
+| 27 | NTLMv1 logons observed (Event 4624 `LmPackageName`) | DCs |
+| 28 | Unsigned LDAP binds (Events 2887 / 2889) | DCs |
+| 29 | Reversible encryption (users, domain policy, FGPP) | AD |
+| 30 | Password & lockout policy vs CIS | AD |
+| 31 | krbtgt password age | AD |
+| 32 | `PASSWD_NOTREQD` accounts | AD |
+| 33 | `ms-DS-MachineAccountQuota` | AD |
+| 34 | AD Recycle Bin | AD |
+| 35 | Pre-Windows 2000 Compatible Access | AD |
 
 ---
 
-## ✅ Base Checks (Script 1–16)
+## 📝 Changelog
 
-- Inactive users/computers
-- Privileged group and user analysis
-- Password policy (Never expires)
-- AdminCount misuse
-- OU structure dump
-- Obsolete OS detection
-- SMBv1 / NTLM / LDAP Signing checks
-- Print Spooler / Firewall state
-- GPO report in HTML
-- LSASS PPL and LAPS status
-
----
-
-## 🔍 Advanced Checks (Script 17–28)
-
-- AS-REP Roasting risks (PreAuth disabled)
-- Duplicate SPNs
-- Unrestricted logonWorkstations
-- Kerberos delegation (unconstrained/constrained)
-- ACL audits on GPOs and OUs
-- SIDHistory tracing
-- Domain trust validation
-- gMSA enumeration
-- Hotfix recency (patch status)
-- Anomalous logon IP analysis
-- Reversible password detection
+### v2.0
+- **Unified** the two scripts into one non-interactive analyzer (`AD-Hardening-Analyzer.ps1`).
+- **Fixed** DC-scoped checks (SMBv1, NTLM, LDAP, Spooler, firewall, RunAsPPL, hotfix) that only inspected the *local* machine: they now run on **all DCs in parallel** via WinRM.
+- **Fixed** mixed report encoding (PS 5.1 `Out-File -Append` defaults to UTF-16) and truncated tables.
+- **Fixed** logic bugs: adminCount filter (`-notmatch` on an array), legacy OS regex missing `Windows Server 2008/2012`, inactive computers missing `OperatingSystem`, 4624 "multiple IP" filter always true, duplicated delegation checks, `Get-GPPermission` by name.
+- **Removed** the non-functional Excel/Word prompts (modules were installed but never used; the `Word` module does not exist). XLSX is now generated with `-Excel`.
+- **Faster**: AD users/computers are read once (previously `Get-ADUser -Filter *` ran 9 times); recursive group membership via `LDAP_MATCHING_RULE_IN_CHAIN`.
+- **New** checks: Kerberoasting, RBCD, NTLMv1 sources, unsigned LDAP clients, krbtgt age, MachineAccountQuota, PASSWD_NOTREQD, password policy vs CIS, Recycle Bin, Pre-Windows 2000 access, trusts hardening.
 
 ---
 
 ## 🔒 License
 
-This toolkit is released for internal use under the [MIT License](https://opensource.org/licenses/MIT).
+Released under the [MIT License](./LICENSE).
 
-© 2025 – TheITBear – All rights reserved.
+© 2025 – TheITBear
